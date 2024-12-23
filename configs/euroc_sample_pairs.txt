@@ -1,0 +1,6 @@
+../dataset/maison1982.jpeg ../dataset/maison_1.jpeg 
+../dataset/maison1982.jpeg ../dataset/maison_2.jpeg 
+../dataset/maison1982.jpeg ../dataset/maison_3.jpeg
+../dataset/maison1982.jpeg ../dataset/maison_4.jpeg  
+../dataset/maison1982.jpeg ../dataset/maison_5.jpeg 
+../dataset/maison1982.jpeg ../dataset/maison_6.jpeg 

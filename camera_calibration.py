@@ -5,13 +5,10 @@ import numpy as np
 import cv2 as cv
 import glob
 import matplotlib.pyplot as plt
-
-
+from configs import files_path as fp
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    # path to the calibration images
-    calib_imgs_path = 'checkboards_calibration/*.jpg'
-    townhall_imgs_path = 'dataset/*.jpg'
+ 
 
     # parameters of the camera calibration pattern
     pattern_num_rows = 9
@@ -31,7 +28,7 @@ if __name__ == '__main__':
     # Arrays to store object points and image points from all the images.
     objpoints = [] # 3d point in real world space
     imgpoints = [] # 2d points in image plane.
-    images = glob.glob(calib_imgs_path)
+    images = glob.glob(fp.CALIBRATION_IMG_PATH)
     print(f"Found images: {images}")
 
     #cv.namedWindow('img', cv.WINDOW_NORMAL)  # Create window with freedom of dimensions
@@ -78,7 +75,7 @@ if __name__ == '__main__':
 
     # undistorting the images
     print('Undistoring the images')
-    images = glob.glob(townhall_imgs_path)
+    images = glob.glob(fp.NEW_IMG_PATH)
     for fname in images:
         img = cv.imread(fname)
         img_rows = img.shape[1]
