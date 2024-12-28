@@ -4,6 +4,15 @@ from matplotlib import pyplot as plt
 from configs import files_path as fp    
 from tqdm import tqdm
 
+def save_points_to_file(points, filename):
+    points = points.T  # Transpose the points to shape (2, n)
+    with open(filename, "w") as f:
+        for point in points:
+            formatted_line = f"{point[0]:.18e} {point[1]:.18e}\n"
+            f.write(formatted_line)
+
+
+
 def compute_epipolar_lines(F_matrix, inlier_matches):
     epipolar_lines_2_1 = []
     for match in inlier_matches:
@@ -173,6 +182,9 @@ def compute_f_ransac(image1, image2, match_pairs, ransac_pixel_threshold, ransac
             best_inlier_count = inlier_count
             best_inlier_matches = inlier_matches
             best_F = F
+              # Sauvegarder src_pts et dst_pts
+            save_points_to_file(x0_m.T, fp.X1_DATA)
+            save_points_to_file(x1_m.T, fp.X2_DATA)
             # Make x0_m and x1_m homogeneous
             x0_m = x0_m.T
             x0_m = np.append(x0_m, np.ones((1, len(x0_m[0]))), axis=0)
@@ -194,43 +206,35 @@ def compute_f_ransac(image1, image2, match_pairs, ransac_pixel_threshold, ransac
             # Plot the 8 random matches on the images with their inliers
             img_matched = cv.drawMatches(image_1, x0k_F, image_2, x1k_F, d_matches_list[:100],
                                  None, flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS and cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-            # plt.figure(1)
-            # plt.clf()
-            # plt.imshow(img_matched, cmap='gray', vmin=0, vmax=255)
-            # # Plot x0_m in the first image and x1_m in the second image
-            # plt.plot(x0_m_F[0][:], x0_m_F[1][:], 'rx')
-            # plt.plot(x1_m_F[0][:]+image2.shape[0], x1_m_F[1][:], 'bx')
-            # plt.draw()
-            # plt.waitforbuttonpress()
 
     print(f'The best F is\n{best_F}')
     print(f'The number of inliers is {best_inlier_count}')
 
     # now that we have the best F, we can compute it using all the inliers
     # get the inliers from the best matches
-    F, x0, x1 = compute_f(best_inlier_matches, N1, N2)
-    print(f'Computed new F from all the inliers:\n{F}')
-    x0_F = x0
-    x1_F = x1
-    x0k_F = [cv.KeyPoint(x0[0, i], x0[1, i], 1) for i in range(8)]
-    x1k_F = [cv.KeyPoint(x1[0, i], x1[1, i], 1) for i in range(8)]
-    # Plot the 8 random matches on the images with their inliers
-    img_matched = cv.drawMatches(image1, x0k_F, image2, x1k_F, d_matches_list[:100],
-                            None, flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS and cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-    plt.figure(2)
-    plt.clf()
-    plt.imshow(img_matched, cmap='gray', vmin=0, vmax=255)
+    # F, x0, x1 = compute_f(best_inlier_matches, N1, N2)
+    # print(f'Computed new F from all the inliers:\n{F}')
+    # x0_F = x0
+    # x1_F = x1
+    # x0k_F = [cv.KeyPoint(x0[0, i], x0[1, i], 1) for i in range(8)]
+    # x1k_F = [cv.KeyPoint(x1[0, i], x1[1, i], 1) for i in range(8)]
+    # # Plot the 8 random matches on the images with their inliers
+    # img_matched = cv.drawMatches(image1, x0k_F, image2, x1k_F, d_matches_list[:100],
+    #                         None, flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS and cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    # plt.figure(2)
+    # plt.clf()
+    # plt.imshow(img_matched, cmap='gray', vmin=0, vmax=255)
 
-    # Plot x0_m in the first image and x1_m in the second image
-    plt.plot(x0_m_F[0][:], x0_m_F[1][:], 'rx')
-    plt.plot(x1_m_F[0][:]+750, x1_m_F[1][:], 'bx')
-    plt.draw
-    plt.draw()
-    plt.waitforbuttonpress()
+    # # Plot x0_m in the first image and x1_m in the second image
+    # plt.plot(x0_m_F[0][:], x0_m_F[1][:], 'rx')
+    # plt.plot(x1_m_F[0][:]+750, x1_m_F[1][:], 'bx')
+    # plt.draw
+    # plt.draw()
+    # plt.waitforbuttonpress()
 
-    # calculate the epipolar lines
-    l_2_1, l_1_2 = compute_epipolar_lines(F, best_inlier_matches)
-    plot_epipolar_lines(image1, image2, l_2_1, l_1_2)
+    # # calculate the epipolar lines
+    # l_2_1, l_1_2 = compute_epipolar_lines(F, best_inlier_matches)
+    # plot_epipolar_lines(image1, image2, l_2_1, l_1_2)
 
 
     return best_F
@@ -283,6 +287,8 @@ if __name__ == "__main__":
     src_pts = np.float32([keypoints_sift_1[m.queryIdx].pt for m in d_matches_list]).reshape(len(d_matches_list), 2)
     dst_pts = np.float32([keypoints_sift_2[m.trainIdx].pt for m in d_matches_list]).reshape(len(d_matches_list), 2)
 
+  
+
     # Make the list of match pairs 
     match_pairs_sift = np.empty([len(matches_list)], dtype=object)
 
@@ -290,3 +296,8 @@ if __name__ == "__main__":
         match_pairs_sift[i] = [src_pts[i], dst_pts[i]]
     print('Computing F with RANSAC')
     F = compute_f_ransac(image_1, image_2, match_pairs_sift, RANSAC_pixel_threshold, RANSAC_confidence, RANSAC_inlier_ratio)
+
+    #stock F in a .txt file
+    np.savetxt(fp.F_PATH, F)
+    
+    
