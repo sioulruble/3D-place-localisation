@@ -18,6 +18,7 @@ def P(T,K):
     canonical_mat= np.identity(3)
     canonical_mat= np.hstack((canonical_mat,np.array([0,0,0]).reshape(3,1)))
     return K@canonical_mat@T
+
 def T_w_c2(E,K1,K2,T_C1_W,x1,x2):
     '''Inputs:
        E: Essential matrix
@@ -75,6 +76,14 @@ def T_w_c2(E,K1,K2,T_C1_W,x1,x2):
             Bestp = np.linalg.inv(T_C1_W)@p
             BestPose = np.linalg.inv(T_C1_W)@Pose
             BestPose = np.linalg.inv(BestPose)
+            print(BestPose)
+
+        print(f"Pose {i}: Votes = {vote}, Rotation =\n{Rot}, Translation = {t}")
+
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.scatter(Bestp[0, :], Bestp[1, :], Bestp[2, :], c='b', marker='o')
+        # plt.show()
            
     return Bestp, BestPose
 
@@ -387,7 +396,7 @@ def resBundleProjection3cameras(Op, x1Data, x2Data, x3Data, K_c, n_points):
     return res
 
 def crossMatrix(x):
-
+    x = np.asarray(x).flatten() 
     return np.array([[0, -x[2], x[1]],
                     [x[2], 0, -x[0]],
                     [-x[1], x[0], 0]])
@@ -400,11 +409,13 @@ if __name__ == '__main__':
 
     # Load ground truth
     T_wc1 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, -1], [0, 0, 0, 1]])
+    T_wc1 = np.eye(4)
 
     K_c = np.load(fp.K_PATH)['mtx']
     # X_w = np.loadtxt('X_w.txt')
     x1Data = np.loadtxt(fp.X1_DATA).T
     x2Data = np.loadtxt(fp.X2_DATA).T
+    x3Data = np.loadtxt(fp.X3_DATA).T
     F_2_1 = np.loadtxt(fp.F_PATH)
 
     #x1 et x2 are in pixel coordinates, we need to convert into 3d points by using the decompositon of the essential matrix and 
@@ -416,7 +427,21 @@ if __name__ == '__main__':
     image_pers_1 = cv2.imread(path_image_1)
     image_pers_2 = cv2.imread(path_image_2)
 
+    W, H =  cv2.imread(fp.IMG_HOUSE_1).shape[1], cv2.imread(fp.IMG_HOUSE_1).shape[0]  # old size
+    W_new, H_new =  image_pers_1.shape[1], image_pers_1.shape[0]  # new size
 
+    # Facteurs d'échelle
+    s_x = W_new / W
+    s_y = H_new / H
+
+    # Nouvelle matrice intrinsèque
+    K_new = np.array([
+        [K_c[0, 0] * s_x, 0,          K_c[0, 2] * s_x],
+        [0,          K_c[1, 1] * s_y, K_c[1, 2] * s_y],
+        [0,          0,             1]
+    ])
+    # K_c = K_new
+    print("Nouvelle matrice intrinsèque :\n", K_c)
 
  
     ##############################
@@ -424,7 +449,7 @@ if __name__ == '__main__':
     #############################
     E = K_c.T @ F_2_1 @ K_c
     pts3D,T_wc2= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x2Data)
-    print(pts3D[:, :])
+    # print(pts3D[:, :])
     
     ##############################
     ##### Question 2.1 #############
@@ -436,8 +461,8 @@ if __name__ == '__main__':
     x2_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc2) @ pts3D
     x1_p /= x1_p[2, :]
     x2_p /= x2_p[2, :]
-    # visualize_residuals(image_pers_1, x1Data, x1_p, title="Résidus de projection dans Image 1")
-    # visualize_residuals(image_pers_2, x2Data, x2_p, title="Résidus de projection dans Image 2")
+    visualize_residuals(image_pers_1, x1Data, x1_p, title="Résidus de projection dans Image 1")
+    visualize_residuals(image_pers_2, x2Data, x2_p, title="Résidus de projection dans Image 2")
     
     #3D difference 
  #essential matrix
@@ -449,7 +474,7 @@ if __name__ == '__main__':
     Op = np.zeros(5 + 3*n_points)
     Op[0:3] = theta_rot 
     Op[3:5] = tras
-    X_3D = (np.linalg.inv(T_wc1) @ pts3D)
+    X_3D = np.linalg.inv(T_wc1) @ pts3D
     Op[5:] = X_3D[:3, :].flatten()  
     
     print("least squares 1")
@@ -463,63 +488,75 @@ if __name__ == '__main__':
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
+    # Plotting the system
+    # drawRefSystem(ax, np.eye(4, 4), '-', 'W')
+    drawRefSystem(ax, T_wc1, '-', 'C1')
+    drawRefSystem(ax, T_wc2, '-', 'C2 (GT)')
+    drawRefSystem(ax, T_wc2_optim, '-', 'C2 (Optimized)')
+    X_opt = result.x[5:].reshape((3, n_points))
+    X_opt_h = np.vstack([X_opt, np.ones((1, n_points))])
+    x_3d_optim = T_wc1 @ X_opt_h
+    ax.scatter(X_3D[0, :], X_3D[1, :], X_3D[2, :], 
+               c='b', marker='.', label='Optimized')
+    ax.scatter(x_3d_optim[0, :], x_3d_optim[1, :], x_3d_optim[2, :], 
+               c='g', marker='.', label='Optimized')    
+
+    # Set the same scale for all axes
+    # max_range = np.array([x_3d_optim[0, :].max() - x_3d_optim[0, :].min(),
+    #                       x_3d_optim[1, :].max() - x_3d_optim[1, :].min(),
+    #                       x_3d_optim[2, :].max() - x_3d_optim[2, :].min()]).max() / 2.0
+
+    # mid_x = (x_3d_optim[0, :].max() + x_3d_optim[0, :].min()) * 0.5
+    # mid_y = (x_3d_optim[1, :].max() + x_3d_optim[1, :].min()) * 0.5
+    # mid_z = (x_3d_optim[2, :].max() + x_3d_optim[2, :].min()) * 0.5
+
+    # ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    # ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    # ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+    ax.legend()
+    plt.title('3D Reconstruction: Ground Truth vs Optimized')
+
+    plt.show()
+    
+    pos_C1 = T_wc1[:3, 3]
+    pos_C2 = T_wc2_optim[:3, 3]
+    distance_between_cameras = np.linalg.norm(pos_C1 - pos_C2)
+
+    # Calculate the closest point distance from the two cameras
+    distances_C1 = np.linalg.norm(pts3D[:3, :] - pos_C1[:, np.newaxis], axis=0)
+    distances_C2 = np.linalg.norm(pts3D[:3, :] - pos_C2[:, np.newaxis], axis=0)
+    closest_distance = min(np.min(distances_C1), np.min(distances_C2))
+
+    print("Distance between cameras:", distance_between_cameras)
+    print("Closest point distance from cameras:", closest_distance)
+
+    
+    ####################################################
+    ################## Exercise 3 ######################
+    ####################################################
+    distCoeffs = np.zeros((5,1))
+    x_3d_optim=x_3d_optim[:3,:]
+    x_3d_optim=x_3d_optim.T
+    imagePoints = np.ascontiguousarray(x3Data, dtype=np.float32).reshape((x3Data.shape[1], 1, 2))
+    retval, rvec, tvec  = cv2.solvePnP(x_3d_optim, imagePoints, K_c, distCoeffs,flags=cv2.SOLVEPNP_EPNP) 
+    R = scAlg.expm(crossMatrix(rvec))
+    t= tvec
+    T_c3c1= ensamble_T(R,t.T)
+    T_wc3_est = T_wc1 @ np.linalg.inv(T_c3c1)
+
+    fig3D = plt.figure(figsize=(12, 8))
+    ax = plt.axes(projection='3d', adjustable='box')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
     #Plotting the system
     drawRefSystem(ax, np.eye(4, 4), '-', 'W')
     drawRefSystem(ax, T_wc1, '-', 'C1')
     drawRefSystem(ax, T_wc2, '-', 'C2 (GT)')
     drawRefSystem(ax, T_wc2_optim, '-', 'C2 (Optimized)')
-    X_opt = result.x[5:].reshape((3, 517))
-    X_opt_h = np.vstack([X_opt, np.ones((1, n_points))])
-    x_3d_optim = T_wc1 @ X_opt_h
-    
-    
-    # ax.scatter(X_w[0, :], X_w[1, :], X_w[2, :], c='r', marker='.', label='Ground Truth')
-    ax.scatter(x_3d_optim[0, :],x_3d_optim[1, :], x_3d_optim[2, :], 
-              c='g', marker='.', label='Optimized')
-    
-    # max_range = np.array([X_w[0,:].max()-X_w[0,:].min(),
-    #                       X_w[1,:].max()-X_w[1,:].min(),
-    #                       X_w[2,:].max()-X_w[2,:].min()]).max() / 2.0
-    
-    # mid_x = (X_w[0,:].max()+X_w[0,:].min()) * 0.5
-    # mid_y = (X_w[1,:].max()+X_w[1,:].min()) * 0.5
-    # mid_z = (X_w[2,:].max()+X_w[2,:].min()) * 0.5
-    
-    # ax.set_xlim(mid_x - max_range, mid_x + max_range)
-    # ax.set_ylim(mid_y - max_range, mid_y + max_range)
-    # ax.set_zlim(mid_z - max_range, mid_z + max_range)
-    
-    ax.legend()
-    plt.title('3D Reconstruction: Ground Truth vs Optimized')
-    
+    drawRefSystem(ax, T_wc3_est, '-', 'C3 (Optimized)')
     plt.show()
-    
-    
-    ####################################################
-    ################## Exercise 3 ######################
-    ####################################################
-    # distCoeffs = np.zeros((5,1))
-    # x_3d_optim=x_3d_optim[:3,:]
-    # x_3d_optim=x_3d_optim.T
-    # imagePoints = np.ascontiguousarray(x3Data, dtype=np.float32).reshape((x3Data.shape[1], 1, 2))
-    # retval, rvec, tvec  = cv2.solvePnP(x_3d_optim, imagePoints, K_c,            
-    # distCoeffs,flags=cv2.SOLVEPNP_EPNP) 
-    # R = scAlg.expm(crossMatrix(rvec))
-    # t= tvec
-    # T_c3c1= ensamble_T(R,t.T)
-    # T_wc3_est = T_wc1 @ np.linalg.inv(T_c3c1)
-
-    # fig3D = plt.figure(figsize=(12, 8))
-    # ax = plt.axes(projection='3d', adjustable='box')
-    # ax.set_xlabel('X')
-    # ax.set_ylabel('Y')
-    # ax.set_zlabel('Z')
-    # #Plotting the system
-    # drawRefSystem(ax, np.eye(4, 4), '-', 'W')
-    # drawRefSystem(ax, T_wc1, '-', 'C1')
-    # drawRefSystem(ax, T_wc2, '-', 'C2 (GT)')
-    # drawRefSystem(ax, T_wc2_optim, '-', 'C2 (Optimized)')
-    # drawRefSystem(ax, T_wc3_est, '-', 'C3 (Optimized)')
     # plt.waitforbuttonpress()
 
 
@@ -527,81 +564,71 @@ if __name__ == '__main__':
     ####################################################
     ################## Exercise 4 ######################
     ####################################################
-    
-    # T_c1c3 = np.linalg.inv(T_wc1)@T_wc3
-    # theta_rot2, tras2 = Parametrice_Pose(T_c1_c2)
-    
-    # Op = np.zeros(10 + 3*n_points)
-    # Op[0:3] = theta_rot 
-    # Op[3:5] = tras
-    # X_3D = (np.linalg.inv(T_wc1) @ pts3D)
-    # Op[5:-5] = X_3D[:3, :].flatten()  
-    # Op[-5:-2] = theta_rot2
-    # Op[-2:] = tras2
-    
-    
-    # print("least squares 2 : 3 cameras !!!!")
-    # result = least_squares(resBundleProjection3cameras, Op, args=(x1Data, x2Data, x3Data, K_c, n_points), verbose=2)
-    
-    # trasl_c1_c2 = T_c1_c2[0:3, 3]
-    # scale_c2 = np.linalg.norm(trasl_c1_c2)# Norm as the scale factor
-    
-    # T_c1_c2_optim3 = ObtainPose(result.x[0:3],result.x[3],result.x[4])
-    # T_c1_c3_optim3 = ObtainPose(result.x[-5:-2],result.x[-2],result.x[-1])
-    
-    # #Apply the scale factor to the transformations
-    # T_c1_c2_optim3[0:3, 3] *= scale_c2
-    # T_c1_c3_optim3[0:3, 3] *= scale_c2
+    _,T_wc3= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x3Data)
 
-    # T_wc2_optim3 = T_wc1 @ T_c1_c2_optim3
-    # T_wc3_optim3 = T_wc1 @ T_c1_c3_optim3
-
-
-    # X_opt_3 = result.x[5:-5].reshape((3, 103)) * scale_c2
-    # X_opt_3 = np.vstack([X_opt_3, np.ones((1, n_points))])
-    # x_3d_optim3 = T_wc1 @ X_opt_3
+    T_c1c3 = np.linalg.inv(T_wc1)@T_wc3
+    theta_rot2, tras2 = Parametrice_Pose(T_c1_c2)
     
-    # X_opt *=scale_c2
-    # X_opt_h = np.vstack([X_opt, np.ones((1, n_points))])
-    # x_3d_optim = T_wc1 @ X_opt_h
+    Op = np.zeros(10 + 3*n_points)
+    Op[0:3] = theta_rot 
+    Op[3:5] = tras
+    X_3D = (np.linalg.inv(T_wc1) @ pts3D)
+    Op[5:-5] = X_3D[:3, :].flatten()  
+    Op[-5:-2] = theta_rot2
+    Op[-2:] = tras2
     
-    # # Visualisation 3D
-    # fig3D = plt.figure(figsize=(12, 8))
-    # ax = plt.axes(projection='3d', adjustable='box')
-    # ax.set_xlabel('X')
-    # ax.set_ylabel('Y')
-    # ax.set_zlabel('Z')
-    # #Plotting the system
-    # drawRefSystem(ax, np.eye(4, 4), "-", "W")
-    # drawRefSystem(ax, T_wc1, "-", "C1")
-    # drawRefSystem(ax, T__wc2, "-", "C2")
+    
+    print("least squares 2 : 3 cameras !!!!")
+    result = least_squares(resBundleProjection3cameras, Op, args=(x1Data, x2Data, x3Data, K_c, n_points), verbose=2)
+    
+    trasl_c1_c2 = T_c1_c2[0:3, 3]
+    scale_c2 = np.linalg.norm(trasl_c1_c2)# Norm as the scale factor
+    
+    T_c1_c2_optim3 = ObtainPose(result.x[0:3],result.x[3],result.x[4])
+    T_c1_c3_optim3 = ObtainPose(result.x[-5:-2],result.x[-2],result.x[-1])
+    
+    #Apply the scale factor to the transformations
+    T_c1_c2_optim3[0:3, 3] *= scale_c2
+    T_c1_c3_optim3[0:3, 3] *= scale_c2
 
-    # drawRefSystem(ax, T_wc2_optim3, "-", "C2_optim3")
-
-    # drawRefSystem(ax, T_wc3_optim3, "-", "C3_optim3")
+    T_wc2_optim3 = T_wc1 @ T_c1_c2_optim3
+    T_wc3_optim3 = T_wc1 @ T_c1_c3_optim3
 
 
-    # ax.scatter(X_w[0, :], X_w[1, :], X_w[2, :], c='r', marker='.', label='Ground Truth')
-    # ax.scatter(x_3d_optim3[0, :],x_3d_optim3[1, :], x_3d_optim3[2, :], 
-    #           c='g', marker='.', label='Optimized : 3 cameras')
-    # ax.scatter(x_3d_optim[0, :],x_3d_optim[1, :], x_3d_optim[2, :], 
-    #           c='b', marker='.', label='Optimized : 2 cameras')
+    X_opt_3 = result.x[5:-5].reshape((3, 103)) * scale_c2
+    X_opt_3 = np.vstack([X_opt_3, np.ones((1, n_points))])
+    x_3d_optim3 = T_wc1 @ X_opt_3
+    
+    X_opt *=scale_c2
+    X_opt_h = np.vstack([X_opt, np.ones((1, n_points))])
+    x_3d_optim = T_wc1 @ X_opt_h
+    
+    # Visualisation 3D
+    fig3D = plt.figure(figsize=(12, 8))
+    ax = plt.axes(projection='3d', adjustable='box')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    #Plotting the system
+    drawRefSystem(ax, np.eye(4, 4), "-", "W")
+    drawRefSystem(ax, T_wc1, "-", "C1")
+    drawRefSystem(ax, T_wc2, "-", "C2")
+
+    drawRefSystem(ax, T_wc2_optim3, "-", "C2_optim3")
+
+    drawRefSystem(ax, T_wc3_optim3, "-", "C3_optim3")
+
+
+   
+    ax.scatter(x_3d_optim3[0, :],x_3d_optim3[1, :], x_3d_optim3[2, :], 
+              c='g', marker='.', label='Optimized : 3 cameras')
+    ax.scatter(x_3d_optim[0, :],x_3d_optim[1, :], x_3d_optim[2, :], 
+              c='b', marker='.', label='Optimized : 2 cameras')
+
 
     
-    # max_range = np.array([X_w[0,:].max()-X_w[0,:].min(),
-    #                      X_w[1,:].max()-X_w[1,:].min(),
-    #                      X_w[2,:].max()-X_w[2,:].min()]).max() / 2.0
+    ax.legend()
+    plt.title('3D Reconstruction with 3 cameras: Ground Truth vs Optimized')
     
-    # mid_x = (X_w[0,:].max()+X_w[0,:].min()) * 0.5
-    # mid_y = (X_w[1,:].max()+X_w[1,:].min()) * 0.5
-    # mid_z = (X_w[2,:].max()+X_w[2,:].min()) * 0.5
-    
-    # ax.set_xlim(mid_x - max_range, mid_x + max_range)
-    # ax.set_ylim(mid_y - max_range, mid_y + max_range)
-    # ax.set_zlim(mid_z - max_range, mid_z + max_range)
-    
-    # ax.legend()
-    # plt.title('3D Reconstruction with 3 cameras: Ground Truth vs Optimized')
-    
-    # plt.waitforbuttonpress()
+    plt.waitforbuttonpress()
         

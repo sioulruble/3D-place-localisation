@@ -67,9 +67,9 @@ def epipolar_line(image, l):
     plt.clf()
     plt.imshow(img, cmap='gray', vmin=0, vmax=255)
     # Plot the epipolar lines
-    for i in range(len(l[0])):
-        x = np.linspace(0, 750, 100)
-        y = -(l[0][i]*x+l[2][i])/l[1][i]
+    for i in range(len(l)):
+        x = np.linspace(0, img.shape[1], 100)
+        y = -(l[i][0] * x + l[i][2]) / l[i][1]
         plt.plot(x, y)
     plt.draw()
     plt.waitforbuttonpress()
@@ -135,26 +135,29 @@ def compute_f(matches, N1, N2):
 def compute_f_ransac(image1, image2, match_pairs, ransac_pixel_threshold, ransac_confidence, ransac_inlier_ratio):
     number_of_iterations = np.log(1 - ransac_confidence) / np.log(1 - ransac_inlier_ratio**8)
     number_of_iterations = int(number_of_iterations)
+    number_of_iterations = min(number_of_iterations, 300)
+
     print(f'The number of iterations is {number_of_iterations}')
     print(f'The number of matches is {len(match_pairs)}')
     best_F = None
     best_inlier_count = 0
     best_matches = None
-
+    pts_img1 = np.empty([0, 2])
     N1 = normalization_matrix(image1.shape[1], image1.shape[0])
     N2 = normalization_matrix(image2.shape[1], image2.shape[0])
-
+    inliers = []    
     for j in range(number_of_iterations):
         if j % 500 == 0:
             print(f'Iteration {j}')
         # Get a sample of 8 matches
-        random_numbers = np.random.randint(0, len(match_pairs), 8)
+        random_numbers = np.random.randint(0, len(match_pairs), 10)
         matches_sample = [match_pairs[random_number] for random_number in random_numbers]
         # compute F with the sample
         F, x0, x1 = compute_f(matches_sample, N1, N2)
         # Let the pixels vote for F: the more inliers, the better is this solution
         inlier_count = 0
         inlier_matches = []
+        
         x0_m = np.empty([0, 2])
         x1_m = np.empty([0, 2])
         # iterate over all the matches to vote for F if they are inliers
@@ -183,13 +186,17 @@ def compute_f_ransac(image1, image2, match_pairs, ransac_pixel_threshold, ransac
             best_inlier_matches = inlier_matches
             best_F = F
               # Sauvegarder src_pts et dst_pts
-            save_points_to_file(x0_m.T, fp.X1_DATA)
-            save_points_to_file(x1_m.T, fp.X2_DATA)
+            # save_points_to_file(x0_m.T, fp.X1_DATA)
+            # save_points_to_file(x1_m.T, fp.X2_DATA)
             # Make x0_m and x1_m homogeneous
             x0_m = x0_m.T
             x0_m = np.append(x0_m, np.ones((1, len(x0_m[0]))), axis=0)
+            
+            pts_img1 = x0_m
             x1_m = x1_m.T
             x1_m = np.append(x1_m, np.ones((1, len(x1_m[0]))), axis=0)
+
+            inliers = [x0_m, x1_m]
             # Copy the matches from x0_m and x1_m to x0_m_F and x1_m_F
             x0_m_F = x0_m.copy()
             x1_m_F = x1_m.copy()
@@ -210,94 +217,94 @@ def compute_f_ransac(image1, image2, match_pairs, ransac_pixel_threshold, ransac
     print(f'The best F is\n{best_F}')
     print(f'The number of inliers is {best_inlier_count}')
 
-    # now that we have the best F, we can compute it using all the inliers
-    # get the inliers from the best matches
-    # F, x0, x1 = compute_f(best_inlier_matches, N1, N2)
-    # print(f'Computed new F from all the inliers:\n{F}')
-    # x0_F = x0
-    # x1_F = x1
-    # x0k_F = [cv.KeyPoint(x0[0, i], x0[1, i], 1) for i in range(8)]
-    # x1k_F = [cv.KeyPoint(x1[0, i], x1[1, i], 1) for i in range(8)]
-    # # Plot the 8 random matches on the images with their inliers
-    # img_matched = cv.drawMatches(image1, x0k_F, image2, x1k_F, d_matches_list[:100],
-    #                         None, flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS and cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-    # plt.figure(2)
-    # plt.clf()
-    # plt.imshow(img_matched, cmap='gray', vmin=0, vmax=255)
 
-    # # Plot x0_m in the first image and x1_m in the second image
-    # plt.plot(x0_m_F[0][:], x0_m_F[1][:], 'rx')
-    # plt.plot(x1_m_F[0][:]+750, x1_m_F[1][:], 'bx')
-    # plt.draw
-    # plt.draw()
-    # plt.waitforbuttonpress()
-
-    # # calculate the epipolar lines
-    # l_2_1, l_1_2 = compute_epipolar_lines(F, best_inlier_matches)
-    # plot_epipolar_lines(image1, image2, l_2_1, l_1_2)
-
-
-    return best_F
+    return best_F,inliers
 
 if __name__ == "__main__":
     np.set_printoptions(precision=4, linewidth=1024, suppress=True)
     # Load the images
     image_1 = cv.imread(fp.P_IMG_HOUSE_1)
     image_2 = cv.imread(fp.P_IMG_HOUSE_2)
+    image_3 = cv.imread(fp.P_IMG_HOUSE_3)
     # Import the pairs .npz file
-    matches_dict = np.load(fp.FEATURES_MATCHING_PATH)
-    keypoints_0 = matches_dict['keypoints0']
-    keypoints_1 = matches_dict['keypoints1']
-    matches = matches_dict['matches']
-    match_confidence = matches_dict['match_confidence']
+    matches_dict_12 = np.load(fp.FEATURES_MATCHING_PATH_1_2)
+    keypoints_0_12 = matches_dict_12['keypoints0']
+    keypoints_1_12 = matches_dict_12['keypoints1']
+    
+    matches_dict_13 = np.load(fp.FEATURES_MATCHING_PATH_1_3)
+    keypoints_0_13 = matches_dict_13['keypoints0']
+    keypoints_1_13 = matches_dict_13['keypoints1']
+
+    matches_12 = matches_dict_12['matches']
+    match_confidence_12 = matches_dict_12['match_confidence']
+
+    matches_13 = matches_dict_13['matches']
+    match_confidence_13 = matches_dict_13['match_confidence']
 
     RANSAC_inlier_ratio = 0.4
     RANSAC_confidence = 0.999
-    RANSAC_pixel_threshold = 2
+    RANSAC_pixel_threshold = 5
 
     # SUPERGLUE
     # Get the match pairs and remove the -1
-    # match_pairs = np.empty([len(matches)], dtype=object)
-    # for i in range(len(matches)):
-    #     if matches[i] == -1:
-    #         match_pairs[i] = None
-    #     else:
-    #         match_pairs[i] = [keypoints_0[i], keypoints_1[matches[i]]]
+    match_pairs_12 = np.empty([len(matches_12)], dtype=object)
+    for i in range(len(matches_12)):
+        if matches_12[i] == -1:
+            match_pairs_12[i] = None
+        else:
+            match_pairs_12[i] = [keypoints_0_12[i], keypoints_1_12[matches_12[i]]]
 
-    # match_pairs = [np.array(match_pairs[i]) for i in range(len(match_pairs)) if match_pairs[i] is not None]
-    # F = compute_f_ransac(image_1, image_2, match_pairs, RANSAC_pixel_threshold, RANSAC_confidence, RANSAC_inlier_ratio)
+    match_pairs_13 = np.empty([len(matches_13)], dtype=object)
+    for i in range(len(matches_13)):
+        if matches_13[i] == -1:
+            match_pairs_13[i] = None
+        else:
+            match_pairs_13[i] = [keypoints_0_13[i], keypoints_1_13[matches_13[i]]]
+
     
-    # SIFT
-    print('SIFT')
-    sift = cv.SIFT_create(nfeatures=0, nOctaveLayers=5, contrastThreshold=0.02, edgeThreshold=20, sigma=0.5)
-    keypoints_sift_1, descriptors_1 = sift.detectAndCompute(image_1, None)
-    keypoints_sift_2, descriptors_2 = sift.detectAndCompute(image_2, None)
-
-    dist_ratio = 0.9
-    min_dist = 200
-    print('Matching with 2nd nearest neighbor')
-    matches_list = match_with_2nd_rr(descriptors_1, descriptors_2, dist_ratio, min_dist)
-    d_matches_list = index_matrix_to_matches_list(matches_list)
-    d_matches_list = sorted(d_matches_list, key=lambda x: x.distance)
-
-    # Conversion from DMatches to Python list
-    matches_list = matches_list_to_index_matrix(d_matches_list)
-
-    # Matched points in numpy from list of DMatches
-    src_pts = np.float32([keypoints_sift_1[m.queryIdx].pt for m in d_matches_list]).reshape(len(d_matches_list), 2)
-    dst_pts = np.float32([keypoints_sift_2[m.trainIdx].pt for m in d_matches_list]).reshape(len(d_matches_list), 2)
-
-  
-
-    # Make the list of match pairs 
-    match_pairs_sift = np.empty([len(matches_list)], dtype=object)
-
-    for i in range(len(matches_list)):
-        match_pairs_sift[i] = [src_pts[i], dst_pts[i]]
-    print('Computing F with RANSAC')
-    F = compute_f_ransac(image_1, image_2, match_pairs_sift, RANSAC_pixel_threshold, RANSAC_confidence, RANSAC_inlier_ratio)
-
-    #stock F in a .txt file
+    match_pairs_12 = [np.array(match_pairs_12[i]) for i in range(len(match_pairs_12)) if match_pairs_12[i] is not None]
+    F, inliers_12 = compute_f_ransac(image_1, image_2, match_pairs_12, RANSAC_pixel_threshold, RANSAC_confidence, RANSAC_inlier_ratio)
     np.savetxt(fp.F_PATH, F)
+    inlier_points_1 = inliers_12[0][:2].T  # Take only x,y coordinates
+    inlier_points_2 = inliers_12[1][:2].T  # Take only x,y coordinates
+    print(inlier_points_1.shape, inlier_points_2.shape)
     
+    match_pairs_13_filtered = [pair for pair in match_pairs_13 if pair is not None]
+points_1_from_13 = np.array([pair[0] for pair in match_pairs_13_filtered])
+points_3 = np.array([pair[1] for pair in match_pairs_13_filtered])
+
+# Initialize arrays for ordered matches
+n_inliers = len(inlier_points_1)
+ordered_matches = []
+
+# For each inlier point, find the closest match in match_pairs_13
+for inlier_idx, inlier_point in enumerate(inlier_points_1):
+    # Calculate distances to all points in match_pairs_13
+    distances = np.sqrt(np.sum((points_1_from_13 - inlier_point) ** 2, axis=1))
     
+    # Find the closest point within threshold
+    closest_idx = np.argmin(distances)
+    min_distance = distances[closest_idx]
+    
+    if min_distance < 3:
+        # Add the match using the closest_idx for points_1_from_13 and points_3
+        ordered_matches.append([
+            points_1_from_13[closest_idx],  # Point from image 1
+            inlier_points_2[inlier_idx],    # Point from image 2 (keep original inlier order)
+            points_3[closest_idx]           # Point from image 3 corresponding to closest match
+        ])
+
+# Filter out None values while maintaining relative order
+filtered_matches = [match for match in ordered_matches if match is not None]
+print(f"Number of filtered matches: {len(filtered_matches)}")
+
+if filtered_matches:
+    points_1 = np.array([m[0] for m in filtered_matches])
+    points_2 = np.array([m[1] for m in filtered_matches])
+    points_3 = np.array([m[2] for m in filtered_matches])
+    
+    save_points_to_file(points_1.T, fp.X1_DATA)
+    save_points_to_file(points_2.T, fp.X2_DATA)
+    save_points_to_file(points_3.T, fp.X3_DATA)
+    
+    print(f"Saved {len(filtered_matches)} corresponding points for all three images")
