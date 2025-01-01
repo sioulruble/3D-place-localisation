@@ -78,7 +78,7 @@ def T_w_c2(E,K1,K2,T_C1_W,x1,x2):
             BestPose = np.linalg.inv(BestPose)
             print(BestPose)
 
-        print(f"Pose {i}: Votes = {vote}, Rotation =\n{Rot}, Translation = {t}")
+        # print(f"Pose {i}: Votes = {vote}, Rotation =\n{Rot}, Translation = {t}")
 
         # fig = plt.figure()
         # ax = fig.add_subplot(111, projection='3d')
@@ -401,7 +401,17 @@ def crossMatrix(x):
                     [x[2], 0, -x[0]],
                     [-x[1], x[0], 0]])
 
-  
+
+def filter_by_residuals(x1, x2, x3, residuals, residual_threshold=10):
+    valid_indices = residuals < residual_threshold
+    return x1[:, valid_indices], x2[:, valid_indices], x3[:, valid_indices]
+
+def compute_projection_residuals(K_c, T_wc, X_3D, x_observed):
+
+    x_projected = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc) @ X_3D
+    x_projected /= x_projected[2, :]  # Normaliser les coordonnées
+    residuals = np.linalg.norm(x_observed - x_projected[:2, :], axis=0)
+    return residuals
     
 if __name__ == '__main__':
     np.set_printoptions(precision=4,linewidth=1024,suppress=True)
@@ -416,7 +426,10 @@ if __name__ == '__main__':
     x1Data = np.loadtxt(fp.X1_DATA).T
     x2Data = np.loadtxt(fp.X2_DATA).T
     x3Data = np.loadtxt(fp.X3_DATA).T
-    F_2_1 = np.loadtxt(fp.F_PATH)
+
+
+    F_2_1 = np.loadtxt(fp.F12_PATH)
+    F_3_1 = np.loadtxt(fp.F13_PATH)
 
     #x1 et x2 are in pixel coordinates, we need to convert into 3d points by using the decompositon of the essential matrix and 
     #the camera calibration matrix
@@ -424,8 +437,10 @@ if __name__ == '__main__':
     #Read the images
     path_image_1 = fp.P_IMG_HOUSE_1
     path_image_2 = fp.P_IMG_HOUSE_2
+    path_image_3 = fp.P_IMG_HOUSE_3
     image_pers_1 = cv2.imread(path_image_1)
     image_pers_2 = cv2.imread(path_image_2)
+    image_pers_3 = cv2.imread(path_image_3)
 
     W, H =  cv2.imread(fp.IMG_HOUSE_1).shape[1], cv2.imread(fp.IMG_HOUSE_1).shape[0]  # old size
     W_new, H_new =  image_pers_1.shape[1], image_pers_1.shape[0]  # new size
@@ -442,6 +457,7 @@ if __name__ == '__main__':
     ])
     # K_c = K_new
     print("Nouvelle matrice intrinsèque :\n", K_c)
+    
 
  
     ##############################
@@ -461,9 +477,21 @@ if __name__ == '__main__':
     x2_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc2) @ pts3D
     x1_p /= x1_p[2, :]
     x2_p /= x2_p[2, :]
+    residuals_12 = compute_projection_residuals(K_c, T_wc1, pts3D, x2Data)
+
+    x1Data, x2Data, x3Data = filter_by_residuals(
+    x1Data, x2Data, x3Data, residuals_12, residual_threshold=100
+
+    
+)
+        
+
+    
+
+
     visualize_residuals(image_pers_1, x1Data, x1_p, title="Résidus de projection dans Image 1")
     visualize_residuals(image_pers_2, x2Data, x2_p, title="Résidus de projection dans Image 2")
-    
+    pts3D,T_wc2= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x2Data)
     #3D difference 
  #essential matrix
     T_c1_c2 = np.linalg.inv(T_wc1) @ T_wc2 #relative transformation between the 2 cameras
@@ -540,8 +568,8 @@ if __name__ == '__main__':
     x_3d_optim=x_3d_optim.T
     imagePoints = np.ascontiguousarray(x3Data, dtype=np.float32).reshape((x3Data.shape[1], 1, 2))
     retval, rvec, tvec  = cv2.solvePnP(x_3d_optim, imagePoints, K_c, distCoeffs,flags=cv2.SOLVEPNP_EPNP) 
-    R = scAlg.expm(crossMatrix(rvec))
-    t= tvec
+    R, _ = cv2.Rodrigues(rvec)  # Convertit directement rvec en matrice de rotation 3x3
+    t = tvec
     T_c3c1= ensamble_T(R,t.T)
     T_wc3_est = T_wc1 @ np.linalg.inv(T_c3c1)
 
@@ -551,11 +579,15 @@ if __name__ == '__main__':
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     #Plotting the system
+    E = K_c.T @ F_3_1 @ K_c
+    pts_3D,T_wc3= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x3Data)
     drawRefSystem(ax, np.eye(4, 4), '-', 'W')
     drawRefSystem(ax, T_wc1, '-', 'C1')
-    drawRefSystem(ax, T_wc2, '-', 'C2 (GT)')
+
     drawRefSystem(ax, T_wc2_optim, '-', 'C2 (Optimized)')
     drawRefSystem(ax, T_wc3_est, '-', 'C3 (Optimized)')
+    drawRefSystem(ax, T_wc3, '-', 'C3 ')
+
     plt.show()
     # plt.waitforbuttonpress()
 
@@ -564,10 +596,17 @@ if __name__ == '__main__':
     ####################################################
     ################## Exercise 4 ######################
     ####################################################
-    _,T_wc3= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x3Data)
+    E = K_c.T @ F_3_1 @ K_c
+    pts_3D,T_wc3= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x3Data)
+    x1_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1) @pts_3D
+    x3_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc3) @ pts_3D
+    x1_p /= x1_p[2, :]
+    x3_p /= x3_p[2, :]
 
-    T_c1c3 = np.linalg.inv(T_wc1)@T_wc3
-    theta_rot2, tras2 = Parametrice_Pose(T_c1_c2)
+    visualize_residuals(image_pers_3, x3Data, x3_p, title="Résidus de projection dans Image 2")
+
+    T_c1_c3 = np.linalg.inv(T_wc1)@T_wc3
+    theta_rot2, tras2 = Parametrice_Pose(T_c1_c3)
     
     Op = np.zeros(10 + 3*n_points)
     Op[0:3] = theta_rot 
@@ -595,7 +634,7 @@ if __name__ == '__main__':
     T_wc3_optim3 = T_wc1 @ T_c1_c3_optim3
 
 
-    X_opt_3 = result.x[5:-5].reshape((3, 103)) * scale_c2
+    X_opt_3 = result.x[5:-5].reshape((3, n_points)) * scale_c2
     X_opt_3 = np.vstack([X_opt_3, np.ones((1, n_points))])
     x_3d_optim3 = T_wc1 @ X_opt_3
     
