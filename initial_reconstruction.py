@@ -19,7 +19,7 @@ def P(T,K):
     canonical_mat= np.hstack((canonical_mat,np.array([0,0,0]).reshape(3,1)))
     return K@canonical_mat@T
 
-def T_w_c2(E,K1,K2,T_C1_W,x1,x2):
+def T_w_c2(E, K1, K2, T_C1_W, x1, x2):
     '''Inputs:
        E: Essential matrix
        K1: Camera calibration matrix of camera 1
@@ -32,60 +32,71 @@ def T_w_c2(E,K1,K2,T_C1_W,x1,x2):
        world frame'''
     Best_vote = 0
     u, s, vh = np.linalg.svd(E)    
-    W = np.array([[0, -1, 0, ], [1, 0, 0], [0, 0, 1]])
+    W = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
     
-    #Get posible rotations
-    R_90 = u@W@vh  
-    if (np.linalg.det(R_90)<0):
+    # Get possible rotations
+    R_90 = u @ W @ vh  
+    if np.linalg.det(R_90) < 0:
         R_90 = -R_90
         
-    R_n90 = u@W.T@vh
-    if (np.linalg.det(R_n90)<0):    
+    R_n90 = u @ W.T @ vh
+    if np.linalg.det(R_n90) < 0:    
         R_n90 = -R_n90
       
-    #get translations 
+    # Get translations 
+    t = u[:, -1]
+    t = t / np.linalg.norm(t)  # Normalize translation
     A = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]])  
-    P1 = K1@A@T_C1_W 
-    #Choose the correct answer and calculate P1 and P2
+    P1 = K1 @ A @ T_C1_W 
+    
+    # Choose the correct answer and calculate P1 and P2
     for i in range(4):
-        Pose = np.eye(4,4)  
-        t = u[:,-1] 
-        Rot = R_90 
-        vote = 0            
-        if(i%2 == 0):
-            t = -(t)            
-        if(i>1):
-            Rot = R_n90
-        Pose[:3,:3] = Rot
-        Pose[:3,3] = t                            
-        Pose = Pose@T_C1_W
-        P2 = K2@A@Pose  
-        p = np.empty([x1.shape[1],4])        
+        Pose = np.eye(4, 4)  
+        if i % 2 == 0:
+            t_current = -t  # Flip translation
+        else:
+            t_current = t
+            
+        if i > 1:
+            Rot = R_n90  # Use alternative rotation
+        else:
+            Rot = R_90
+            
+        Pose[:3, :3] = Rot
+        Pose[:3, 3] = t_current                            
+        Pose = Pose @ T_C1_W
+        P2 = K2 @ A @ Pose  
+        
+        # Triangulate points
+        p = np.empty([x1.shape[1], 4])        
         for k in range(x1.shape[1]):
-            p[:][k] = (triangulation(P1,P2,x1[:,k],x2[:,k]))
+            p[k, :] = triangulation(P1, P2, x1[:, k], x2[:, k])
         p = p.T 
-        p = T_C1_W@p
+        p = T_C1_W @ p
         p = normalize3Dpoints(p)        
-        Pose = T_C1_W@Pose
+        Pose = T_C1_W @ Pose
+        
+        # Count votes for points in front of both cameras
+        vote = 0
         for k in range(x1.shape[1]):   
-            #if a point is in front both cameras votes +1                     
-            if(p[2,k] > 0 and p[2,k] > Pose[2,3]):
-                    vote = vote + 1
-        if (vote>Best_vote):                 
+            if p[2, k] > 0 and Pose[2, 3] > 0:  # Ensure points are in front of both cameras
+                vote += 1
+                
+        if vote > Best_vote:                 
             Best_vote = vote
-            Bestp = np.linalg.inv(T_C1_W)@p
-            BestPose = np.linalg.inv(T_C1_W)@Pose
+            Bestp = np.linalg.inv(T_C1_W) @ p
+            BestPose = np.linalg.inv(T_C1_W) @ Pose
             BestPose = np.linalg.inv(BestPose)
-            print(BestPose)
 
-        # print(f"Pose {i}: Votes = {vote}, Rotation =\n{Rot}, Translation = {t}")
+        # print(f"Pose {i}: Votes = {vote}")
 
-        # fig = plt.figure()
-        # ax = fig.add_subplot(111, projection='3d')
-        # ax.scatter(Bestp[0, :], Bestp[1, :], Bestp[2, :], c='b', marker='o')
-        # plt.show()
-           
     return Bestp, BestPose
+
+
+
+# Usage:
+# Replace calls to T_w_c2 with:
+# pts3D, T_wc2 = T_w_c2_opencv(E, K1, K2, T_C1_W, x1Data, x2Data)
 
 def normalize3Dpoints(A):
     for i in range(4):
@@ -132,53 +143,37 @@ def ensamble_T(R_w_c, t_w_c) -> np.array:
     """
     T_w_c = np.zeros((4, 4))
     T_w_c[0:3, 0:3] = R_w_c
-    T_w_c[0:3, 3] = t_w_c
+    T_w_c[0:3, 3] = t_w_c.flatten()
     T_w_c[3, 3] = 1
     return T_w_c
 
 
-def ObtainPose(theta_rot,theta_tras,phi_tras):
-    """
-    -input:theta_rot,theta_tras,phi_tras
-    -output: Pose matrix
-    """
-    #Rodrigues
-    R = scAlg.expm(crossMatrix(theta_rot))
-    
-    #Calculate the 3x1 translation vector in Cartesian coordinates
-    Tras = np.array([np.sin(theta_tras)*np.cos(phi_tras),np.sin(theta_tras)*np.sin(phi_tras),
-    np.cos(theta_tras)])
-    T = np.hstack([R, Tras.reshape((3, 1))])
-    T = np.vstack([T, [0, 0, 0, 1]])
-    return T
-    
-def indexMatrixToMatchesList(matchesList):
-    """
-    Convert a numpy matrix of index in a list of DMatch OpenCv matches.
-     -input:
-         matchesList: nMatches x 3 --> [[indexDesc1,indexDesc2,descriptorDistance],...]]
-     -output:
-        dMatchesList: list of n DMatch object
-     """
-    dMatchesList = []
-    for row in matchesList:
-        dMatchesList.append(cv2.DMatch(_queryIdx=row[0].astype('int'), _trainIdx=row[1].astype('int'), _distance=row[2]))
-    return dMatchesList
-
-
 def Parametrice_Pose(T):
-    """
-    -input:
-    T: Transformation matrix
-    -output:List rot with the 3 angles and list tras with the 2 angles
-    """
-    R = T[0:3, 0:3]
-    theta_rot = crossMatrixInv(scAlg.logm(R))
+    R_mat = T[:3, :3]
+    t = T[:3, 3]
+    rot = R.from_matrix(R_mat)
+    theta_rot = rot.as_euler('zyx')
+    norm_t = np.linalg.norm(t)
+    if norm_t > 0:
+        theta_tras = np.arccos(t[2] / norm_t)
+        phi_tras = np.arctan2(t[1], t[0])
+    else:
+        theta_tras = 0.0
+        phi_tras = 0.0
+    return theta_rot, np.array([theta_tras, phi_tras])
 
-    theta_tras = np.arccos(T[2,2])
-    phi_tras = np.arccos(T[2,0]/np.sin(theta_tras))   
-    tras = [theta_tras, phi_tras]
-    return theta_rot,tras
+def ObtainPose(theta_rot, theta_tras, phi_tras):
+    rot = R.from_euler('zyx', theta_rot)
+    R_mat = rot.as_matrix()
+    t = np.array([
+        np.sin(theta_tras) * np.cos(phi_tras),
+        np.sin(theta_tras) * np.sin(phi_tras),
+        np.cos(theta_tras)
+    ])
+    T = np.eye(4)
+    T[:3, :3] = R_mat
+    T[:3, 3] = t
+    return T
 
 def matchesListToIndexMatrix(dMatchesList):
     """
@@ -303,41 +298,33 @@ def crossMatrixInv(M):
 def resBundleProjection(Op, x1Data, x2Data, K_c, n_points):
     """
     Compute residuals between observed and projected 2D points in two views.
-
-    Parameters
-    ----------
-    Op : Array of parameters to optimize, including rotation, translation angles, 
-        and 3D coordinates of points.
-    x1Data : Observed 2D points in the first view, shape (2, n_points).
-    x2Data : Observed 2D points in the second view, shape (2, n_points).
-    K_c :  Intrinsic camera matrix, shape (3, 3).
-    n_points : Number of 3D points.
-
-    Returns
-    -------
-    res : Residuals for all points in both views, shape (4 * n_points,).
     """
-    rot, theta_tras, phi_tras, X = unpackParameters(Op, n_points)
-    T = np.eye(4)
-    T_c1c = ObtainPose(rot,theta_tras,phi_tras)
-    res1 = []
-    res2 = []
-    X_h = np.vstack([X, np.ones((1, n_points))])
-    x1_proj = K_c @ np.eye(3, 4) @ T @ X_h
-    x1_proj /= x1_proj[2, :]
+    # Unpack parameters
+    rot = Op[0:3]
+    theta_tras = Op[3]
+    phi_tras = Op[4]
+    X = Op[5:].reshape(3, n_points)
     
-    x2_proj =  K_c @ np.eye(3, 4) @ np.linalg.inv(T_c1c) @ X_h
-    x2_proj = x2_proj / x2_proj[2] 
-
-    for i in range(n_points):
-        #View 1
-        res1.append(x1Data[0,i] - x1_proj[0, i] )    # x
-        res1.append(x1Data[1,i] - x1_proj[1, i])   # y
-        # View 2
-        res2.append(x2Data[0,i] - x2_proj[0,i]  ) # x
-        res2.append(x2Data[1,i]- x2_proj[1,i]  ) # y
-    res = np.hstack([res1,res2])
-    res = np.array(res).flatten()
+    # Compute relative pose
+    T_c1_c2 = ObtainPose(rot, theta_tras, phi_tras)
+    T_wc2 = T_wc1 @ T_c1_c2  # Transform to world frame
+    
+    # Project points in both views
+    X_h = np.vstack([X, np.ones((1, n_points))])  # Homogeneous coordinates
+    x1_proj = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1) @ X_h
+    x1_proj /= x1_proj[2, :]  # Normalize
+    
+    x2_proj = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc2) @ X_h
+    x2_proj /= x2_proj[2, :]  # Normalize
+    
+    # Compute residuals
+    res = np.hstack([
+        (x1Data[0, :] - x1_proj[0, :]),  # x residuals (view 1)
+        (x1Data[1, :] - x1_proj[1, :]),  # y residuals (view 1)
+        (x2Data[0, :] - x2_proj[0, :]),  # x residuals (view 2)
+        (x2Data[1, :] - x2_proj[1, :])   # y residuals (view 2)
+    ])
+    
     return res
 
 
@@ -369,7 +356,7 @@ def resBundleProjection3cameras(Op, x1Data, x2Data, x3Data, K_c, n_points):
     res3= []
     
     X_h = np.vstack([X, np.ones((1, n_points))])
-    x1_proj = K_c @ np.eye(3, 4) @ T @ X_h
+    x1_proj = K_c @ np.eye(3, 4) @ np.linalg.inv(T) @ X_h
     x1_proj /= x1_proj[2, :]
     
     x2_proj =  K_c @ np.eye(3, 4) @ np.linalg.inv(T_c1c) @ X_h
@@ -412,14 +399,49 @@ def compute_projection_residuals(K_c, T_wc, X_3D, x_observed):
     x_projected /= x_projected[2, :]  # Normaliser les coordonnées
     residuals = np.linalg.norm(x_observed - x_projected[:2, :], axis=0)
     return residuals
+
+def test_scales(T_wc1, T_c1_c2, x1Data, x2Data, K_c, scales):
+    best_scale = None
+    best_error = float('inf')
+    best_points3D = None
     
+    for scale in scales:
+        # Appliquer l'échelle à la translation
+        T_c1_c2_scaled = T_c1_c2.copy()
+        T_c1_c2_scaled[:3, 3] *= scale
+        T_wc2_scaled = T_wc1 @ T_c1_c2_scaled
+        
+        # Triangulate points using cv2.triangulatePoints
+        P1 = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1)
+        P2 = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc2_scaled)
+        points4D = cv2.triangulatePoints(P1, P2, x1Data, x2Data)
+        points3D_scaled = points4D / points4D[3, :]  # Normalize homogeneous coordinates
+        
+        # Compute reprojection error
+        x1_proj = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1) @ points3D_scaled
+        x1_proj /= x1_proj[2, :]
+        x2_proj = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc2_scaled) @ points3D_scaled
+        x2_proj /= x2_proj[2, :]
+        
+        error = np.mean(np.linalg.norm(x1Data - x1_proj[:2, :], axis=0) + np.linalg.norm(x2Data - x2_proj[:2, :], axis=0))
+        
+        # Mettre à jour la meilleure échelle
+        if error < best_error:
+            best_error = error
+            best_scale = scale
+            best_points3D = points3D_scaled
+    
+    return best_scale, best_points3D
+
+# Exemple d'utilisation
+
+
 if __name__ == '__main__':
     np.set_printoptions(precision=4,linewidth=1024,suppress=True)
 
 
     # Load ground truth
-    T_wc1 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, -1], [0, 0, 0, 1]])
-    T_wc1 = np.eye(4)
+    T_wc1 = np.eye(4, dtype=np.float32)
 
     K_c = np.load(fp.K_PATH)['mtx']
     # X_w = np.loadtxt('X_w.txt')
@@ -431,10 +453,7 @@ if __name__ == '__main__':
     F_2_1 = np.loadtxt(fp.F12_PATH)
     F_3_1 = np.loadtxt(fp.F13_PATH)
 
-    #x1 et x2 are in pixel coordinates, we need to convert into 3d points by using the decompositon of the essential matrix and 
-    #the camera calibration matrix
-
-    #Read the images
+  
     path_image_1 = fp.P_IMG_HOUSE_1
     path_image_2 = fp.P_IMG_HOUSE_2
     path_image_3 = fp.P_IMG_HOUSE_3
@@ -442,20 +461,6 @@ if __name__ == '__main__':
     image_pers_2 = cv2.imread(path_image_2)
     image_pers_3 = cv2.imread(path_image_3)
 
-    W, H =  cv2.imread(fp.IMG_HOUSE_1).shape[1], cv2.imread(fp.IMG_HOUSE_1).shape[0]  # old size
-    W_new, H_new =  image_pers_1.shape[1], image_pers_1.shape[0]  # new size
-
-    # Facteurs d'échelle
-    s_x = W_new / W
-    s_y = H_new / H
-
-    # Nouvelle matrice intrinsèque
-    K_new = np.array([
-        [K_c[0, 0] * s_x, 0,          K_c[0, 2] * s_x],
-        [0,          K_c[1, 1] * s_y, K_c[1, 2] * s_y],
-        [0,          0,             1]
-    ])
-    # K_c = K_new
     print("Nouvelle matrice intrinsèque :\n", K_c)
     
 
@@ -464,40 +469,66 @@ if __name__ == '__main__':
     ##### Question 2 #############
     #############################
     E = K_c.T @ F_2_1 @ K_c
-    pts3D,T_wc2= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x2Data)
-    # print(pts3D[:, :])
+    x1Data_cv = x1Data.T.astype(np.float32).reshape(-1, 2)
+    x2Data_cv = x2Data.T.astype(np.float32).reshape(-1, 2)
+    E, mask = cv2.findEssentialMat(x1Data_cv, x2Data_cv, K_c, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+    pts3D,T_wc2= T_w_c2(E, K_c, K_c, T_wc1, x1Data, x2Data)
+
+    _, R1, t, mask_pose = cv2.recoverPose(E, x1Data_cv, x2Data_cv, K_c)
+    T_21 = np.eye(4, dtype=np.float32)
+    T_21[:3, :3] = R1
+    T_21[:3, 3] = t.flatten()
+    T_wc1 = np.eye(4, dtype=np.float32)
+    R1 = T_wc1[:3, :3]
+    t1 = T_wc1[:3, 3]
+    R2 = T_wc2[:3, :3]
+    t2 = T_wc2[:3, 3]
+
+    # Matrices de projection
+    P1 = K_c @ np.hstack((R1, t1.reshape(-1, 1)))
+    P2 = K_c @ np.hstack((R2, t2.reshape(-1, 1)))
+
     
-    ##############################
-    ##### Question 2.1 #############
-    #############################
-    
-    # Residuals between each poiint
-    T_c1c2 = np.linalg.inv(T_wc1)@T_wc2
+
+    # Triangulation
+    points4D = cv2.triangulatePoints(P1, P2, x1Data, x2Data)
+
+
     x1_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1) @pts3D
     x2_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc2) @ pts3D
     x1_p /= x1_p[2, :]
     x2_p /= x2_p[2, :]
-    residuals_12 = compute_projection_residuals(K_c, T_wc1, pts3D, x2Data)
-
-    x1Data, x2Data, x3Data = filter_by_residuals(
-    x1Data, x2Data, x3Data, residuals_12, residual_threshold=100
-
-    
-)
-        
-
-    
-
 
     visualize_residuals(image_pers_1, x1Data, x1_p, title="Résidus de projection dans Image 1")
     visualize_residuals(image_pers_2, x2Data, x2_p, title="Résidus de projection dans Image 2")
-    pts3D,T_wc2= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x2Data)
-    #3D difference 
- #essential matrix
-    T_c1_c2 = np.linalg.inv(T_wc1) @ T_wc2 #relative transformation between the 2 cameras
+
+    
+    T_c1_c2 = np.linalg.inv(T_wc1) @ T_wc2 
+    print(T_c1_c2)
+    # scales = [2, 2.5, 2.75, 3, 3.25, 3.5]  # Échelles à tester
+    # best_scale, best_points3D = test_scales(T_wc1, T_c1_c2, x1Data, x2Data, K_c, scales)
+    # print(f"Meilleure échelle : {best_scale}") 
+    # T_c1_c2[:3, 3] *= best_scale
     theta_rot, tras = Parametrice_Pose(T_c1_c2) #relative pose parametrization
     n_points = np.shape(pts3D)[1] 
     
+    fig3D = plt.figure(figsize=(12, 8))
+    ax = plt.axes(projection='3d', adjustable='box')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    # Plotting the system
+    # drawRefSystem(ax, np.eye(4, 4), '-', 'W')
+    drawRefSystem(ax, T_wc1, '-', 'C1')
+    drawRefSystem(ax, T_wc2, '-', 'C2 (GT)')
+    X_3D = np.linalg.inv(T_wc1) @ pts3D
+
+    ax.scatter(X_3D[0, :], X_3D[1, :], X_3D[2, :], 
+               c='b', marker='.', label='not opt')
+    ax.legend()
+    plt.title('3D Reconstruction: Ground Truth vs Optimized')
+
+    plt.show()
     #Op vector  :  rotation parameters, translation, and 3D points in a specific format
     Op = np.zeros(5 + 3*n_points)
     Op[0:3] = theta_rot 
@@ -524,23 +555,22 @@ if __name__ == '__main__':
     X_opt = result.x[5:].reshape((3, n_points))
     X_opt_h = np.vstack([X_opt, np.ones((1, n_points))])
     x_3d_optim = T_wc1 @ X_opt_h
-    ax.scatter(X_3D[0, :], X_3D[1, :], X_3D[2, :], 
-               c='b', marker='.', label='Optimized')
+    x_3d_optim /= x_3d_optim[3, :]  # Normalize the homogeneous coordinate
+    
     ax.scatter(x_3d_optim[0, :], x_3d_optim[1, :], x_3d_optim[2, :], 
                c='g', marker='.', label='Optimized')    
 
-    # Set the same scale for all axes
-    # max_range = np.array([x_3d_optim[0, :].max() - x_3d_optim[0, :].min(),
-    #                       x_3d_optim[1, :].max() - x_3d_optim[1, :].min(),
-    #                       x_3d_optim[2, :].max() - x_3d_optim[2, :].min()]).max() / 2.0
-
-    # mid_x = (x_3d_optim[0, :].max() + x_3d_optim[0, :].min()) * 0.5
-    # mid_y = (x_3d_optim[1, :].max() + x_3d_optim[1, :].min()) * 0.5
-    # mid_z = (x_3d_optim[2, :].max() + x_3d_optim[2, :].min()) * 0.5
-
-    # ax.set_xlim(mid_x - max_range, mid_x + max_range)
-    # ax.set_ylim(mid_y - max_range, mid_y + max_range)
-    # ax.set_zlim(mid_z - max_range, mid_z + max_range)
+    max_range = np.array([X_3D[0,:].max()-X_3D[0,:].min(),
+                          X_3D[1,:].max()-X_3D[1,:].min(),
+                          X_3D[2,:].max()-X_3D[2,:].min()]).max() 
+    
+    mid_x = (X_3D[0,:].max()+X_3D[0,:].min()) 
+    mid_y = (X_3D[1,:].max()+X_3D[1,:].min()) 
+    mid_z = (X_3D[2,:].max()+X_3D[2,:].min())
+    
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
 
     ax.legend()
     plt.title('3D Reconstruction: Ground Truth vs Optimized')
@@ -560,18 +590,37 @@ if __name__ == '__main__':
     print("Closest point distance from cameras:", closest_distance)
 
     
-    ####################################################
-    ################## Exercise 3 ######################
-    ####################################################
+    ####################################################################
+    ####### Pnp estimation of the 3rd camera pose ######################
+    ####################################################################
     distCoeffs = np.zeros((5,1))
-    x_3d_optim=x_3d_optim[:3,:]
-    x_3d_optim=x_3d_optim.T
-    imagePoints = np.ascontiguousarray(x3Data, dtype=np.float32).reshape((x3Data.shape[1], 1, 2))
-    retval, rvec, tvec  = cv2.solvePnP(x_3d_optim, imagePoints, K_c, distCoeffs,flags=cv2.SOLVEPNP_EPNP) 
-    R, _ = cv2.Rodrigues(rvec)  # Convertit directement rvec en matrice de rotation 3x3
-    t = tvec
-    T_c3c1= ensamble_T(R,t.T)
-    T_wc3_est = T_wc1 @ np.linalg.inv(T_c3c1)
+
+    # Reformater les points 3D et 2D pour solvePnP
+    X_3D_pnp = X_3D[:3, :].T  # Points 3D (n x 3)
+    X_3D_pnp = np.ascontiguousarray(X_3D_pnp, dtype=np.float32)
+
+    x3Data_pnp = x3Data.T  # Points 2D (n x 2)
+    x3Data_pnp = np.ascontiguousarray(x3Data_pnp, dtype=np.float32)
+
+    # Vérifier qu'on a assez de points
+    n_points = X_3D_pnp.shape[0]
+    if n_points < 4:
+        print(f"Pas assez de points pour solvePnP: {n_points} points (minimum 4 requis)")
+    else:
+        print(f"Nombre de points pour solvePnP: {n_points}")
+
+        # Résoudre PnP
+        retval, rvec, tvec = cv2.solvePnP(X_3D_pnp, 
+                                         x3Data_pnp, 
+                                         K_c, 
+                                         distCoeffs,
+                                         flags=cv2.SOLVEPNP_EPNP)
+
+        # Convertir le résultat en matrice de transformation
+        R2, _ = cv2.Rodrigues(rvec)
+        t = tvec
+        T_c3c1 = ensamble_T(R2, t.T)
+        T_wc3_est = T_wc1 @ np.linalg.inv(T_c3c1)
 
     fig3D = plt.figure(figsize=(12, 8))
     ax = plt.axes(projection='3d', adjustable='box')
@@ -579,14 +628,13 @@ if __name__ == '__main__':
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     #Plotting the system
-    E = K_c.T @ F_3_1 @ K_c
-    pts_3D,T_wc3= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x3Data)
+    
     drawRefSystem(ax, np.eye(4, 4), '-', 'W')
     drawRefSystem(ax, T_wc1, '-', 'C1')
 
     drawRefSystem(ax, T_wc2_optim, '-', 'C2 (Optimized)')
     drawRefSystem(ax, T_wc3_est, '-', 'C3 (Optimized)')
-    drawRefSystem(ax, T_wc3, '-', 'C3 ')
+    # drawRefSystem(ax, T_wc3, '-', 'C3 ')
 
     plt.show()
     # plt.waitforbuttonpress()
@@ -594,18 +642,16 @@ if __name__ == '__main__':
 
 
     ####################################################
-    ################## Exercise 4 ######################
+    ################## Resbundle wih 3 cameras #########
     ####################################################
-    E = K_c.T @ F_3_1 @ K_c
-    pts_3D,T_wc3= T_w_c2(E,K_c,K_c,np.linalg.inv(T_wc1),x1Data,x3Data)
-    x1_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1) @pts_3D
-    x3_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc3) @ pts_3D
+    x1_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc1) @pts3D
+    x3_p = K_c @ np.eye(3, 4) @ np.linalg.inv(T_wc3_est) @ pts3D
     x1_p /= x1_p[2, :]
     x3_p /= x3_p[2, :]
 
     visualize_residuals(image_pers_3, x3Data, x3_p, title="Résidus de projection dans Image 2")
 
-    T_c1_c3 = np.linalg.inv(T_wc1)@T_wc3
+    T_c1_c3 = np.linalg.inv(T_wc1)@T_wc3_est
     theta_rot2, tras2 = Parametrice_Pose(T_c1_c3)
     
     Op = np.zeros(10 + 3*n_points)
@@ -618,7 +664,7 @@ if __name__ == '__main__':
     
     
     print("least squares 2 : 3 cameras !!!!")
-    result = least_squares(resBundleProjection3cameras, Op, args=(x1Data, x2Data, x3Data, K_c, n_points), verbose=2)
+    result = least_squares(resBundleProjection3cameras, Op, args=(x1Data, x2Data, x3Data, K_c, n_points), verbose=2, method='trf', ftol=1e-8, xtol=1e-8, gtol=1e-8, max_nfev=300)
     
     trasl_c1_c2 = T_c1_c2[0:3, 3]
     scale_c2 = np.linalg.norm(trasl_c1_c2)# Norm as the scale factor
@@ -664,10 +710,13 @@ if __name__ == '__main__':
     ax.scatter(x_3d_optim[0, :],x_3d_optim[1, :], x_3d_optim[2, :], 
               c='b', marker='.', label='Optimized : 2 cameras')
 
+    
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
 
     
     ax.legend()
     plt.title('3D Reconstruction with 3 cameras: Ground Truth vs Optimized')
     
-    plt.waitforbuttonpress()
-        
+    plt.show()
